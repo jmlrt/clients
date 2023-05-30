@@ -17,7 +17,10 @@ import { PolicyResponse } from "@bitwarden/common/admin-console/models/response/
 import { KdfConfig } from "@bitwarden/common/auth/models/domain/kdf-config";
 import { EmergencyAccessPasswordRequest } from "@bitwarden/common/auth/models/request/emergency-access-password.request";
 import { KdfType } from "@bitwarden/common/enums";
-import { SymmetricCryptoKey } from "@bitwarden/common/models/domain/symmetric-crypto-key";
+import {
+  SymmetricCryptoKey,
+  UserSymKey,
+} from "@bitwarden/common/models/domain/symmetric-crypto-key";
 import { PasswordGenerationServiceAbstraction } from "@bitwarden/common/tools/generator/password";
 
 @Component({
@@ -91,9 +94,9 @@ export class EmergencyAccessTakeoverComponent
     );
 
     const oldKeyBuffer = await this.cryptoService.rsaDecrypt(takeoverResponse.keyEncrypted);
-    const oldEncKey = new SymmetricCryptoKey(oldKeyBuffer);
+    const oldUserSymKey = new SymmetricCryptoKey(oldKeyBuffer) as UserSymKey;
 
-    if (oldEncKey == null) {
+    if (oldUserSymKey == null) {
       this.platformUtilsService.showToast(
         "error",
         this.i18nService.t("errorOccurred"),
@@ -102,7 +105,7 @@ export class EmergencyAccessTakeoverComponent
       return;
     }
 
-    const key = await this.cryptoService.makeKey(
+    const masterKey = await this.cryptoService.makeMasterKey(
       this.masterPassword,
       this.email,
       takeoverResponse.kdf,
@@ -112,9 +115,15 @@ export class EmergencyAccessTakeoverComponent
         takeoverResponse.kdfParallelism
       )
     );
-    const masterPasswordHash = await this.cryptoService.hashPassword(this.masterPassword, key);
+    const masterPasswordHash = await this.cryptoService.hashPassword(
+      this.masterPassword,
+      masterKey
+    );
 
-    const encKey = await this.cryptoService.remakeEncKey(key, oldEncKey);
+    const encKey = await this.cryptoService.encryptUserSymKeyWithMasterKey(
+      masterKey,
+      oldUserSymKey
+    );
 
     const request = new EmergencyAccessPasswordRequest();
     request.newMasterPasswordHash = masterPasswordHash;
