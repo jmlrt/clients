@@ -13,7 +13,7 @@ import { StateService } from "../../abstractions/state.service";
 import { PolicyService } from "../../admin-console/abstractions/policy/policy.service.abstraction";
 import { KdfType, KeySuffixOptions } from "../../enums";
 import { Utils } from "../../misc/utils";
-import { SymmetricCryptoKey } from "../../models/domain/symmetric-crypto-key";
+import { MasterKey } from "../../models/domain/symmetric-crypto-key";
 import { PreloginRequest } from "../../models/request/prelogin.request";
 import { ErrorResponse } from "../../models/response/error.response";
 import { AuthRequestPushNotification } from "../../models/response/notification.response";
@@ -262,7 +262,7 @@ export class AuthService implements AuthServiceAbstraction {
     return AuthenticationStatus.Unlocked;
   }
 
-  async makePreloginKey(masterPassword: string, email: string): Promise<SymmetricCryptoKey> {
+  async makePreloginKey(masterPassword: string, email: string): Promise<MasterKey> {
     email = email.trim().toLowerCase();
     let kdf: KdfType = null;
     let kdfConfig: KdfConfig = null;

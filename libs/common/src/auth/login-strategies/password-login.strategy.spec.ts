@@ -10,14 +10,20 @@ import { StateService } from "../../abstractions/state.service";
 import { PolicyService } from "../../admin-console/abstractions/policy/policy.service.abstraction";
 import { HashPurpose } from "../../enums";
 import { Utils } from "../../misc/utils";
-import { SymmetricCryptoKey } from "../../models/domain/symmetric-crypto-key";
+import {
+  MasterKey,
+  SymmetricCryptoKey,
+  UserSymKey,
+} from "../../models/domain/symmetric-crypto-key";
 import { PasswordGenerationService } from "../../tools/generator/password";
+import { CsprngArray } from "../../types/csprng";
 import { AuthService } from "../abstractions/auth.service";
 import { TokenService } from "../abstractions/token.service";
 import { TwoFactorService } from "../abstractions/two-factor.service";
 import { TwoFactorProviderType } from "../enums/two-factor-provider-type";
 import { ForceResetPasswordReason } from "../models/domain/force-reset-password-reason";
 import { PasswordLogInCredentials } from "../models/domain/log-in-credentials";
+import { IdentityTokenResponse } from "../models/response/identity-token.response";
 import { IdentityTwoFactorResponse } from "../models/response/identity-two-factor.response";
 import { MasterPasswordPolicyResponse } from "../models/response/master-password-policy.response";
 
@@ -28,11 +34,11 @@ const email = "hello@world.com";
 const masterPassword = "password";
 const hashedPassword = "HASHED_PASSWORD";
 const localHashedPassword = "LOCAL_HASHED_PASSWORD";
-const preloginKey = new SymmetricCryptoKey(
+const masterKey = new SymmetricCryptoKey(
   Utils.fromB64ToArray(
     "N2KWjlLpfi5uHjv+YcfUKIpZ1l+W+6HRensmIqD+BFYBf6N/dvFpJfWwYnVBdgFCK2tJTAIMLhqzIQQEUmGFgg=="
   )
-);
+) as MasterKey;
 const deviceId = Utils.newGuid();
 const masterPasswordPolicy = new MasterPasswordPolicyResponse({
   EnforceOnLogin: true,
@@ -55,6 +61,7 @@ describe("PasswordLogInStrategy", () => {
 
   let passwordLogInStrategy: PasswordLogInStrategy;
   let credentials: PasswordLogInCredentials;
+  let tokenResponse: IdentityTokenResponse;
 
   beforeEach(async () => {
     cryptoService = mock<CryptoService>();
@@ -73,7 +80,7 @@ describe("PasswordLogInStrategy", () => {
     appIdService.getAppId.mockResolvedValue(deviceId);
     tokenService.decodeToken.mockResolvedValue({});
 
-    authService.makePreloginKey.mockResolvedValue(preloginKey);
+    authService.makePreloginKey.mockResolvedValue(masterKey);
 
     cryptoService.hashPassword
       .calledWith(masterPassword, expect.anything(), undefined)
@@ -99,10 +106,9 @@ describe("PasswordLogInStrategy", () => {
       authService
     );
     credentials = new PasswordLogInCredentials(email, masterPassword);
+    tokenResponse = identityTokenResponseFactory(masterPasswordPolicy);
 
-    apiService.postIdentityToken.mockResolvedValue(
-      identityTokenResponseFactory(masterPasswordPolicy)
-    );
+    apiService.postIdentityToken.mockResolvedValue(tokenResponse);
   });
 
   it("sends master password credentials to the server", async () => {
@@ -124,15 +130,25 @@ describe("PasswordLogInStrategy", () => {
     );
   });
 
-  it("sets the local environment after a successful login", async () => {
+  it("sets keys after a successful authentication", async () => {
+    const userSymKey = new SymmetricCryptoKey(
+      new Uint8Array(64).buffer as CsprngArray
+    ) as UserSymKey;
+
+    cryptoService.getMasterKey.mockResolvedValue(masterKey);
+    cryptoService.decryptUserSymKeyWithMasterKey.mockResolvedValue(userSymKey);
+
     await passwordLogInStrategy.logIn(credentials);
 
-    expect(cryptoService.setKey).toHaveBeenCalledWith(preloginKey);
+    expect(cryptoService.setMasterKey).toHaveBeenCalledWith(masterKey);
     expect(cryptoService.setKeyHash).toHaveBeenCalledWith(localHashedPassword);
+    expect(cryptoService.setUserSymKeyMasterKey).toHaveBeenCalledWith(tokenResponse.key);
+    expect(cryptoService.setUserKey).toHaveBeenCalledWith(userSymKey);
+    expect(cryptoService.setPrivateKey).toHaveBeenCalledWith(tokenResponse.privateKey);
   });
 
   it("does not force the user to update their master password when there are no requirements", async () => {
-    apiService.postIdentityToken.mockResolvedValueOnce(identityTokenResponseFactory(null));
+    apiService.postIdentityToken.mockResolvedValueOnce(identityTokenResponseFactory());
 
     const result = await passwordLogInStrategy.logIn(credentials);
 

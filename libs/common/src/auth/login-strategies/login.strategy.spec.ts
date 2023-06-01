@@ -11,7 +11,13 @@ import { PolicyService } from "../../admin-console/abstractions/policy/policy.se
 import { Utils } from "../../misc/utils";
 import { Account, AccountProfile, AccountTokens } from "../../models/domain/account";
 import { EncString } from "../../models/domain/enc-string";
+import {
+  MasterKey,
+  SymmetricCryptoKey,
+  UserSymKey,
+} from "../../models/domain/symmetric-crypto-key";
 import { PasswordGenerationService } from "../../tools/generator/password";
+import { CsprngArray } from "../../types/csprng";
 import { AuthService } from "../abstractions/auth.service";
 import { TokenService } from "../abstractions/token.service";
 import { TwoFactorService } from "../abstractions/two-factor.service";
@@ -34,7 +40,7 @@ const masterPassword = "password";
 const deviceId = Utils.newGuid();
 const accessToken = "ACCESS_TOKEN";
 const refreshToken = "REFRESH_TOKEN";
-const encKey = "ENC_KEY";
+const userSymKey = "USER_SYM_KEY";
 const privateKey = "PRIVATE_KEY";
 const captchaSiteKey = "CAPTCHA_SITE_KEY";
 const kdf = 0;
@@ -61,7 +67,7 @@ export function identityTokenResponseFactory(
     ForcePasswordReset: false,
     Kdf: kdf,
     KdfIterations: kdfIterations,
-    Key: encKey,
+    Key: userSymKey,
     PrivateKey: privateKey,
     ResetMasterPassword: false,
     access_token: accessToken,
@@ -126,6 +132,20 @@ describe("LogInStrategy", () => {
   });
 
   describe("base class", () => {
+    const userSymKeyBytesLength = 64;
+    const masterKeyBytesLength = 64;
+    let userSymKey: UserSymKey;
+    let masterKey: MasterKey;
+
+    beforeEach(() => {
+      userSymKey = new SymmetricCryptoKey(
+        new Uint8Array(userSymKeyBytesLength).buffer as CsprngArray
+      ) as UserSymKey;
+      masterKey = new SymmetricCryptoKey(
+        new Uint8Array(masterKeyBytesLength).buffer as CsprngArray
+      ) as MasterKey;
+    });
+
     it("sets the local environment after a successful login", async () => {
       apiService.postIdentityToken.mockResolvedValue(identityTokenResponseFactory());
 
@@ -153,8 +173,6 @@ describe("LogInStrategy", () => {
           },
         })
       );
-      expect(cryptoService.setEncKey).toHaveBeenCalledWith(encKey);
-      expect(cryptoService.setEncPrivateKey).toHaveBeenCalledWith(privateKey);
       expect(messagingService.send).toHaveBeenCalledWith("loggedIn");
     });
 
@@ -184,6 +202,8 @@ describe("LogInStrategy", () => {
       });
 
       apiService.postIdentityToken.mockResolvedValue(tokenResponse);
+      cryptoService.getMasterKey.mockResolvedValue(masterKey);
+      cryptoService.decryptUserSymKeyWithMasterKey.mockResolvedValue(userSymKey);
 
       const result = await passwordLogInStrategy.logIn(credentials);
 
@@ -201,13 +221,15 @@ describe("LogInStrategy", () => {
       cryptoService.makeKeyPair.mockResolvedValue(["PUBLIC_KEY", new EncString("PRIVATE_KEY")]);
 
       apiService.postIdentityToken.mockResolvedValue(tokenResponse);
+      cryptoService.getMasterKey.mockResolvedValue(masterKey);
+      cryptoService.decryptUserSymKeyWithMasterKey.mockResolvedValue(userSymKey);
 
       await passwordLogInStrategy.logIn(credentials);
 
-      // User key must be set before the new RSA keypair is generated, otherwise we can't decrypt the EncKey
-      expect(cryptoService.setKey).toHaveBeenCalled();
+      // User symmetric key must be set before the new RSA keypair is generated
+      expect(cryptoService.setUserKey).toHaveBeenCalled();
       expect(cryptoService.makeKeyPair).toHaveBeenCalled();
-      expect(cryptoService.setKey.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(cryptoService.setUserKey.mock.invocationCallOrder[0]).toBeLessThan(
         cryptoService.makeKeyPair.mock.invocationCallOrder[0]
       );
 
